@@ -156,7 +156,7 @@ class TrainData_ParT(TrainData):
                              'Cpfcan_BtagPf_trackJetDistVal',
                              'Cpfcan_ptrel',
                              'Cpfcan_drminsv',
-                             'Cpfcan_distminsv',
+                            # 'Cpfcan_distminsv', ## don't use this for Run 3 2023 model !!!
                              'Cpfcan_VTX_ass',
                              'Cpfcan_puppiw',
                              'Cpfcan_chi2',
@@ -185,7 +185,11 @@ class TrainData_ParT(TrainData):
         self.n_vtx = 5
         
         self.cpf_pts_branches = ['Cpfcan_pt','Cpfcan_eta',
-                                 'Cpfcan_phi', 'Cpfcan_e']
+                                 'Cpfcan_phi', 'Cpfcan_e',
+                                 #'Cpfcan_nhitpixelBarrelLayer1', 'Cpfcan_nhitpixelBarrelLayer2',
+                                 #'Cpfcan_nhitpixelEndcapLayer1', 'Cpfcan_nhitpixelEndcapLayer2',
+                                 #'Cpfcan_numberOfValidHits', 'Cpfcan_numberOfValidPixelHits'
+                                ]
         
         self.npf_pts_branches = ['Npfcan_pt','Npfcan_eta',
                                  'Npfcan_phi', 'Npfcan_e']
@@ -375,4 +379,11 @@ class TrainData_ParT(TrainData):
         files["tree"] = out
         files["tree"]
         files["tree"].show()
-
+        
+        out = np.core.records.fromarrays(np.vstack( (predicted[0].transpose(),truth[0].transpose(), features[0][:,0:2].transpose() ) ),
+                                         names='prob_isB, prob_isBB,prob_isLeptB, prob_isC,prob_isUDS,prob_isG,isB, isBB, isLeptB, isC,isUDS,isG,jet_pt, jet_eta')
+        #out = np.core.records.fromarrays(arr,
+        #                                 names='prob_isB, prob_isBB,prob_isLeptB, prob_isC,prob_isUDS,prob_isG,isB, isBB, isLeptB, isC,isUDS,isG,jet_pt, jet_eta')
+        #array2root(out, outfilename, 'tree')
+        print('now also saving numpy arrays to', outfilename)
+        np.save(outfilename.strip('.root')+'.npy', out)
