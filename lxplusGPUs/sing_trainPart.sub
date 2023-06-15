@@ -7,6 +7,7 @@ should_transfer_files   = YES
 when_to_transfer_output = ON_EXIT
 request_GPUs = 1
 request_CPUs = 1
-requirements = TARGET.CUDACapability =?= 7.0
-+JobFlavour = "testmatch"
+requirements = regexp("A100", TARGET.CUDADeviceName)
++JobFlavour = "testmatch" 
+# "tomorrow"
 queue
