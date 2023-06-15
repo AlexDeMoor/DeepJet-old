@@ -2,6 +2,8 @@ DeepJet: Repository for training and evaluation of deep neural networks for Jet 
 ===============================================================================
 
 This package depends on DeepJetCore 3.X (https://github.com/DL4Jets/DeepJetCore). (but it should still work for DJC2)
+This version is the latest update including the nominal and adversarial training environment for ParticleTransformerAK4 used for Run3-2023 models.
+This work is a combination of the contributions of Annika Stein and Alexandre De Moor.
 
 Usage
 ==============
@@ -88,7 +90,7 @@ The commands for starting a GPU session are the next ones :
 ```
 condor_submit -interactive /path/to/sing.sub
 source /path/to/run_deepjetcore3.sh
-export KRB5CCNAME=/tmp/cred1111
+export KRB5CCNAME=/tmp/cred6644
 kinit
 ```
 
