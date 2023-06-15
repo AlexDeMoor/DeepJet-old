@@ -1,15 +1,22 @@
 import torch 
 import torch.nn as nn
 from pytorch_Part import training_base
+#from ParticleTransformer import get_model
+#from pytorch_deepjet_transformer_v4_corr import DeepJetTransformer, ParticleTransformer
 from ParT import ParticleTransformer
 #from pytorch_deepjet_transformer_v4 import DeepJetTransformer, ParticleTransformer
 #from ParT_old import DeepJetTransformer, ParticleTransformer
 from pytorch_ranger import *
 #from schedulers import *
+from focal_loss import FocalLoss, focal_loss
 
 def cross_entropy_one_hot(input, target):
     _, labels = target.max(dim=1)
     return nn.CrossEntropyLoss()(input, labels)
+
+def my_focal_loss(input, target, alpha=None, gamma=2.0):
+    _, labels = target.max(dim=1)
+    return FocalLoss(alpha, gamma, reduction='none')(input, labels)
 
 num_epochs = 30
 
@@ -19,6 +26,7 @@ mil = list(range(num_epochs - lr_epochs, num_epochs))
 print(lr_rate)
 print(mil)
 
+#model = ParticleTransformer(num_classes = 6, num_enc = 3)
 model = ParticleTransformer(num_classes = 6,
                             num_enc = 3,
                             num_head = 8,
@@ -27,14 +35,14 @@ model = ParticleTransformer(num_classes = 6,
                             npf_dim = 8,
                             vtx_dim = 14,
                             for_inference = False)
-
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model.to(device)
 
 #model = nn.DataParallel(model)
 scaler = torch.cuda.amp.GradScaler()
 
-criterion = cross_entropy_one_hot
+criterion = my_focal_loss
+#criterion = cross_entropy_one_hot
 optimizer = Ranger(model.parameters(), lr = 1e-3)
 #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones = [1], gamma = 0.1)
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones = mil, gamma = lr_rate)

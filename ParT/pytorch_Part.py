@@ -24,26 +24,100 @@ import copy
 
 import imp
 
-def train_loop(dataloader, nbatches, model, loss_fn, optimizer, device, epoch, epoch_pbar, acc_loss, scaler, scheduler):
+from attacks_ParT import *
+from definitions_ParT import epsilons_per_feature, vars_per_candidate, defaults_per_variable
+from focal_loss import FocalLoss, focal_loss
+
+glob_vars = vars_per_candidate['glob']
+
+def train_loop(dataloader, nbatches, model, loss_fn, optimizer, device, epoch, epoch_pbar, acc_loss, scaler, scheduler, attack, att_magnitude, restrict_impact, epsilon_factors, defaults_device):
+    print('Type of train_loop [Nominal(None)|Adversarial()]:', attack)
     for b in range(nbatches):
         
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         #should not happen unless files are broken (will give additional errors)
         #if dataloader.isEmpty():
-         #   raise Exception("ran out of data") 
+        #    raise Exception("ran out of data") 
             
         features_list, truth_list = next(dataloader)
 
-        glob = torch.Tensor(features_list[0]).to(device)
+        #glob = torch.Tensor(features_list[0]).to(device)
         cpf = torch.Tensor(features_list[1]).to(device)
         npf = torch.Tensor(features_list[2]).to(device)
         vtx = torch.Tensor(features_list[3]).to(device)
         cpf_4v = torch.Tensor(features_list[4]).to(device)
+        cpf_4v = cpf_4v[:,:,:4]
         npf_4v = torch.Tensor(features_list[5]).to(device)
         vtx_4v = torch.Tensor(features_list[6]).to(device)
         #pair = torch.Tensor(features_list[7]).to(device)
         #print(pair[0,:28,:])
         y = torch.Tensor(truth_list[0]).to(device)
+        
+        #glob[:,:] = torch.where(glob[:,:] == -999., torch.zeros(len(glob),glob_vars).to(device), glob[:,:])
+        #glob[:,:] = torch.where(glob[:,:] ==   -1., torch.zeros(len(glob),glob_vars).to(device), glob[:,:])
+        
+        # apply attack
+        #print('Attack type:',attack)
+        if attack == 'Noise' and b % 2 == 0:
+            #print('Do Noise')
+            #glob = apply_noise(glob, 
+            #                   magn=att_magnitude,
+            #                   offset=[0],
+            #                   dev=device,
+            #                   restrict_impact=restrict_impact,
+            #                   var_group='glob')
+            cpf = apply_noise(cpf, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='cpf')
+            npf = apply_noise(npf, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='npf')
+            vtx = apply_noise(vtx, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='vtx')
+            cpf_4v = apply_noise(cpf_4v, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='cpf_pts')
+            npf_4v = apply_noise(npf_4v, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='npf_pts')
+            vtx_4v = apply_noise(vtx_4v, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='vtx_pts')
+
+        elif (attack == 'FGSM' or attack == 'NGM') and b % 2 == 0:
+            #print('Do FGSM')
+            with torch.cuda.amp.autocast():
+                #glob, cpf, npf, vtx, cpf_4v, npf_4v, vtx_4v = first_order_attack(sample=(glob,cpf,npf,vtx,cpf_4v,npf_4v,vtx_4v), 
+                cpf, npf, vtx, cpf_4v, npf_4v, vtx_4v = first_order_attack(sample=(cpf,npf,vtx,cpf_4v,npf_4v,vtx_4v), 
+                                                                          epsilon=att_magnitude,
+                                                                          dev=device,
+                                                                          targets=y,
+                                                                          thismodel=model,
+                                                                          thiscriterion=loss_fn,
+                                                                          restrict_impact=restrict_impact,
+                                                                          epsilon_factors=epsilon_factors,
+                                                                          defaults_per_variable = defaults_device,
+                                                                          do_sign_or_normed_grad = attack)
+            
         # Compute prediction and loss
         inpt = (cpf, npf, vtx, cpf_4v, npf_4v, vtx_4v)
         #ncpf = int(torch.max(glob[:,2]))
@@ -53,7 +127,7 @@ def train_loop(dataloader, nbatches, model, loss_fn, optimizer, device, epoch, e
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
             pred = model(inpt)
-            loss = loss_fn(pred, y.type_as(pred))
+            loss = loss_fn(pred, y.type_as(pred)).mean() # batch loss
         scaler.scale(loss).backward()
         #scaler.unscale_(optimizer)
         #torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -62,9 +136,12 @@ def train_loop(dataloader, nbatches, model, loss_fn, optimizer, device, epoch, e
         #loss.backward()
         #optimizer.step()
         #scheduler.step()
-        acc_loss += loss.detach().item()
+        acc_loss += loss.detach().item() # batch loss, is a mean over individual losses in batch
         # Update progress bar description
-        avg_loss = acc_loss / (b + 1)
+        avg_loss = acc_loss / (b + 1) # per batch, the avg_loss is updated
+        # batch 0 -> batch0_loss / 1 = batch0_loss
+        # batch 1 -> (batch0_loss + batch1_loss)/2
+        # batch 2 -> (batch0_loss + batch1_loss + batch2_loss) / 3
         #if((b % 100) == 0):
         #    print(f"Training Error: \n batch : {(b):>0.1f} / {(nbatches):>0.1f}, Avg loss: {avg_loss:>6f} \n")
         desc = f'Epoch {epoch+1} - loss {avg_loss:.6f}'
@@ -75,21 +152,22 @@ def train_loop(dataloader, nbatches, model, loss_fn, optimizer, device, epoch, e
 
 def val_loop(dataloader, nbatches, model, loss_fn, device, epoch):
     num_batches = nbatches
-    test_loss, correct = 0, 0
+    test_loss, correct, total = 0, 0, 0
  
     with torch.no_grad():
         for b in range(nbatches):
         #should not happen unless files are broken (will give additional errors)
             #if dataloader.isEmpty():
-             #   raise Exception("ran out of data") 
+            #    raise Exception("ran out of data") 
 
-            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            #device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
             features_list, truth_list = next(dataloader)
-            glob = torch.Tensor(features_list[0]).to(device)
+            #glob = torch.Tensor(features_list[0]).to(device)
             cpf = torch.Tensor(features_list[1]).to(device)
             npf = torch.Tensor(features_list[2]).to(device)
             vtx = torch.Tensor(features_list[3]).to(device)
             cpf_4v = torch.Tensor(features_list[4]).to(device)
+            cpf_4v = cpf_4v[:,:,:4]
             npf_4v = torch.Tensor(features_list[5]).to(device)
             vtx_4v = torch.Tensor(features_list[6]).to(device)
             #pair = torch.Tensor(features_list[7]).to(device)
@@ -99,25 +177,37 @@ def val_loop(dataloader, nbatches, model, loss_fn, device, epoch):
             pred = model(inpt)
             # Compute prediction and loss
             _, labels = y.max(dim=1)
-            
-            test_loss += loss_fn(pred, y.long()).item()
+            #print(labels)
+            #print(y)
+            #total += cpf[0].shape[0] # this does not have the length of one batch, but rather the number of cpfs !
+            total += cpf.shape[0]
+            test_loss += loss_fn(pred, y.long()).mean().item() # batch loss, added for every batch
+            avg_loss = test_loss / (b + 1)
             correct += (pred.argmax(1) == labels).type(torch.float).sum().item()
+            #print(correct)
+            #print(total)
  
-    test_loss /= num_batches
-    correct /= (num_batches * cpf[0].shape[0])
-    print(f"Test Error: \n Accuracy: {(100*correct):>0.6f}%, Avg loss: {test_loss:>6f} \n")
-    return test_loss
+    #test_loss /= num_batches # will be total loss over all batches, divided by number of batches
+    #correct /= (num_batches * cpf[0].shape[0])
+    correct /= total # this is dividing by the total length of validation set, also works for the edge case of the last batch
+    #print(f"Test Error: \n Accuracy: {(100*correct):>0.6f}%, Avg loss: {test_loss:>6f} \n")
+    print(f"Test Error: \n Accuracy: {(100*correct):>0.6f}%, Avg loss: {avg_loss:>6f} \n")
+    return avg_loss
 
 def cross_entropy_one_hot(input, target):
     _, labels = target.max(dim=1)
     return nn.CrossEntropyLoss()(input, labels)
+
+def my_focal_loss(input, target, alpha=None, gamma=3.0):
+    _, labels = target.max(dim=1)
+    return FocalLoss(alpha, gamma, reduction='none')(input, labels)
 
 class training_base(object):
     
     def __init__(self, model = None, criterion = cross_entropy_one_hot, optimizer = None,
                 scheduler = None, scaler = None, splittrainandtest=0.85, useweights=False, 
                  testrun=False, testrun_fraction=0.1, resumeSilently=False, renewtokens=True,
-		 collection_class=DataCollection, parser=None, recreate_silently=False):
+		 collection_class=DataCollection, parser=None, recreate_silently=False, FL_gamma=None):
         
         import sys
         scriptname=sys.argv[0]
@@ -222,8 +312,8 @@ class training_base(object):
       #      del self.train_data
        #     del self.val_data
             
-    def saveModel(self,model, optimizer, epoch, scheduler, best_loss, is_best = False):
-        checkpoint = {'state_dict': model.state_dict(),'optimizer' :optimizer.state_dict(),'epoch': epoch,'scheduler': scheduler.state_dict(),'best_loss': best_loss}
+    def saveModel(self,model, optimizer, epoch, scheduler, best_loss, train_loss, val_loss, is_best = False):
+        checkpoint = {'state_dict': model.state_dict(),'optimizer' :optimizer.state_dict(),'epoch': epoch,'scheduler': scheduler.state_dict(),'best_loss': best_loss,'train_loss': train_loss,'val_loss': val_loss}
         if is_best:
             torch.save(checkpoint, self.outputDir+'checkpoint_best_loss.pth')
         else:
@@ -249,7 +339,7 @@ class training_base(object):
         self.val_data.setBatchSize(batchsize)
         
     def trainModel(self, nepochs, batchsize, batchsize_use_sum_of_squares = False, extend_truth_list_by=0,
-                   load_in_mem = False, max_files = -1, plot_batch_loss = False, **trainargs):
+                   load_in_mem = False, max_files = -1, plot_batch_loss = False, attack = None, att_magnitude = 0., restrict_impact = -1, start_attack_after = 0, do_micro_tests_only = False, FL_gamma = None, **trainargs):
         
         self._initTraining(batchsize, batchsize_use_sum_of_squares)
         print('starting training')
@@ -283,16 +373,51 @@ class training_base(object):
             self.model.to(self.device)
             #self.optimizer.to(self.device)
             
+            if attack != None:
+                epsilon_factors = {
+                    #'glob' : torch.Tensor(np.load(epsilons_per_feature['glob']).transpose()).to(self.device),
+                    'cpf' : torch.Tensor(np.load(epsilons_per_feature['cpf']).transpose()).to(self.device),
+                    'npf' : torch.Tensor(np.load(epsilons_per_feature['npf']).transpose()).to(self.device),
+                    'vtx' : torch.Tensor(np.load(epsilons_per_feature['vtx']).transpose()).to(self.device),
+                    #'cpf_pts' : torch.cat((torch.Tensor(np.load(epsilons_per_feature['cpf_pts']).transpose()).to(self.device)
+                    #                     torch.zeros(6, device=self.device))), # more features not currently covered with attacks
+                    'cpf_pts' : torch.Tensor(np.load(epsilons_per_feature['cpf_pts']).transpose()).to(self.device),
+                    'npf_pts' : torch.Tensor(np.load(epsilons_per_feature['npf_pts']).transpose()).to(self.device),
+                    'vtx_pts' : torch.Tensor(np.load(epsilons_per_feature['vtx_pts']).transpose()).to(self.device),
+                }
+
+                #defaults_device = {
+                #    #'glob' : torch.Tensor(defaults_per_variable['glob']).to(self.device),
+                #    'cpf' : torch.Tensor(defaults_per_variable['cpf']).to(self.device),
+                #    'npf' : torch.Tensor(defaults_per_variable['npf']).to(self.device),
+                #    'vtx' : torch.Tensor(defaults_per_variable['vtx']).to(self.device),
+                #    'cpf_pts' : torch.Tensor(defaults_per_variable['cpf_pts']).to(self.device),
+                #    'npf_pts' : torch.Tensor(defaults_per_variable['npf_pts']).to(self.device),
+                #    'vtx_pts' : torch.Tensor(defaults_per_variable['vtx_pts']).to(self.device),
+                #}
+                
+                defaults_device = defaults_per_variable
+            else:
+                epsilon_factors = None
+                defaults_device = None
+                
             while(self.trainedepoches < nepochs):
-           
+                if self.trainedepoches < start_attack_after:
+                    dynamic_attack = None
+                else:
+                    dynamic_attack = attack
                 #this can change from epoch to epoch
                 #calculate steps for this epoch
                 #feed info below
                 traingen.prepareNextEpoch()
                 valgen.prepareNextEpoch()
 
-                nbatches_train = traingen.getNBatches() #might have changed due to shuffeling
-                nbatches_val = valgen.getNBatches()
+                if do_micro_tests_only:
+                    nbatches_train = 10
+                    nbatches_val = 10
+                else:
+                    nbatches_train = traingen.getNBatches() #might have changed due to shuffeling
+                    nbatches_val = valgen.getNBatches()
                 
                 train_generator=traingen.feedNumpyData()
                 val_generator=valgen.feedNumpyData()
@@ -307,7 +432,7 @@ class training_base(object):
                     self.model.train()
                     for param_group in self.optimizer.param_groups:
                         print('/n Learning rate = '+str(param_group['lr'])+' /n')
-                    train_loss = train_loop(train_generator, nbatches_train, self.model, self.criterion, self.optimizer, self.device, self.trainedepoches, epoch_pbar, acc_loss=0, scaler = self.scaler, scheduler = self.scheduler)
+                    train_loss = train_loop(train_generator, nbatches_train, self.model, self.criterion, self.optimizer, self.device, self.trainedepoches, epoch_pbar, acc_loss=0, scaler = self.scaler, scheduler = self.scheduler, attack = dynamic_attack, att_magnitude = att_magnitude, restrict_impact = restrict_impact, epsilon_factors = epsilon_factors, defaults_device = defaults_device)
                     self.scheduler.step()
                 
                     self.model.eval()
@@ -317,10 +442,11 @@ class training_base(object):
                     
                     if(val_loss < self.best_loss):
                         self.best_loss = val_loss
-                        self.saveModel(self.model, self.optimizer, self.trainedepoches, self.scheduler, self.best_loss, is_best = True)
+                        self.saveModel(self.model, self.optimizer, self.trainedepoches, self.scheduler, self.best_loss, train_loss, val_loss, is_best = True)
 
                     
-                    self.saveModel(self.model, self.optimizer, self.trainedepoches, self.scheduler, self.best_loss, is_best = False)
-                
-                traingen.shuffleFileList() #Swap with the line above if you have an error
-		#traingen.shuffleFilelist() #Swap with the line above if you have an error
+                    self.saveModel(self.model, self.optimizer, self.trainedepoches, self.scheduler, self.best_loss, train_loss, val_loss, is_best = False)
+                    print(self.trainedepoches, nepochs)
+                    if self.trainedepoches < nepochs:
+                        print('Shuffeling...')
+                        traingen.shuffleFileList() # Note: DJC3 shuffleFileList, older: shuffleFilelist
