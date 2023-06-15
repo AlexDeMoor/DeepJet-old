@@ -12,7 +12,7 @@ def cross_entropy_one_hot(input, target):
     _, labels = target.max(dim=1)
     return nn.CrossEntropyLoss()(input, labels)
 
-num_epochs = 30
+num_epochs = 60 # AS [19.05.22]: more epochs for adversarial training (because we know that this converges only slowly due to saddle-point problem)
 
 lr_epochs = max(1, int(num_epochs * 0.3))
 lr_rate = 0.01 ** (1.0 / lr_epochs)
@@ -31,15 +31,15 @@ train=training_base(model = model, criterion = criterion, optimizer = optimizer,
 
 train.train_data.maxFilesOpen=1
 
-
+'''
 attack = None
 att_magnitude = 0.
 restrict_impact = -1
 '''
 attack = 'FGSM'
-att_magnitude = 0.01
+att_magnitude = 0.02
 restrict_impact = -1
-'''
+
 model,history = train.trainModel(nepochs=num_epochs+lr_epochs, 
                                  batchsize=4000,
                                  attack = attack,

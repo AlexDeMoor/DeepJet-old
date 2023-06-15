@@ -45,18 +45,18 @@ class InputProcess(nn.Module):
         self.cpf_conv4 = InputConv(32,8)
         
         
-        self.npf_bn = torch.nn.BatchNorm1d(8, eps = 0.001, momentum = 0.6)
-        self.npf_conv1 = InputConv(8,32)
-#        self.npf_bn = torch.nn.BatchNorm1d(6, eps = 0.001, momentum = 0.6)
-#        self.npf_conv1 = InputConv(6,32)
+#        self.npf_bn = torch.nn.BatchNorm1d(8, eps = 0.001, momentum = 0.6)
+#        self.npf_conv1 = InputConv(8,32)
+        self.npf_bn = torch.nn.BatchNorm1d(6, eps = 0.001, momentum = 0.6)
+        self.npf_conv1 = InputConv(6,32)
         self.npf_conv2 = InputConv(32,16)
         self.npf_conv3 = InputConv(16,4)
 #        self.npf_conv4 = InputConv(128,128)
         
-        self.vtx_bn = torch.nn.BatchNorm1d(14, eps = 0.001, momentum = 0.6)
-        self.vtx_conv1 = InputConv(14,64)
-#        self.vtx_bn = torch.nn.BatchNorm1d(12, eps = 0.001, momentum = 0.6)
-#        self.vtx_conv1 = InputConv(12,64)
+#        self.vtx_bn = torch.nn.BatchNorm1d(14, eps = 0.001, momentum = 0.6)
+#        self.vtx_conv1 = InputConv(14,64)
+        self.vtx_bn = torch.nn.BatchNorm1d(12, eps = 0.001, momentum = 0.6)
+        self.vtx_conv1 = InputConv(12,64)
         self.vtx_conv2 = InputConv(64,32)
         self.vtx_conv3 = InputConv(32,32)
         self.vtx_conv4 = InputConv(32,8)
@@ -126,12 +126,12 @@ class DenseClassifier(nn.Module):
         
         return x
     
-class DeepJet(nn.Module):
+class DeepJet_Run2(nn.Module):
 
     def __init__(self,
                  num_classes = 6,
                  **kwargs):
-        super(DeepJet, self).__init__(**kwargs)
+        super(DeepJet_Run2, self).__init__(**kwargs)
         self.InputProcess = InputProcess()
         self.DenseClassifier = DenseClassifier()
         

@@ -24,7 +24,12 @@ import copy
 
 import imp
 
-def train_loop(dataloader, nbatches, model, loss_fn, optimizer, device, epoch, epoch_pbar, acc_loss):
+from attacks import *
+from definitions import epsilons_per_feature, vars_per_candidate
+
+glob_vars = vars_per_candidate['glob']
+
+def train_loop(dataloader, nbatches, model, loss_fn, optimizer, device, epoch, epoch_pbar, attack, att_magnitude, restrict_impact, epsilon_factors, acc_loss):
     for b in range(nbatches):
         #should not happen unless files are broken (will give additional errors)
         #if dataloader.isEmpty():
@@ -37,7 +42,50 @@ def train_loop(dataloader, nbatches, model, loss_fn, optimizer, device, epoch, e
         npf = torch.Tensor(features_list[2]).to(device)
         vtx = torch.Tensor(features_list[3]).to(device)
         #pxl = torch.Tensor(features_list[4]).to(device)
-        y = torch.Tensor(truth_list[0]).to(device)    
+        y = torch.Tensor(truth_list[0]).to(device)
+        
+        glob[:,:] = torch.where(glob[:,:] == -999., torch.zeros(len(glob),glob_vars).to(device), glob[:,:])
+        glob[:,:] = torch.where(glob[:,:] ==   -1., torch.zeros(len(glob),glob_vars).to(device), glob[:,:])
+        
+        # apply attack
+        #print('Attack type:',attack)
+        if attack == 'Noise':
+            #print('Do Noise')
+            glob = apply_noise(glob, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='glob')
+            cpf = apply_noise(cpf, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='cpf')
+            npf = apply_noise(npf, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='npf')
+            vtx = apply_noise(vtx, 
+                               magn=att_magnitude,
+                               offset=[0],
+                               dev=device,
+                               restrict_impact=restrict_impact,
+                               var_group='vtx')
+
+        elif attack == 'FGSM':
+            #print('Do FGSM')
+            glob, cpf, npf, vtx = fgsm_attack(sample=(glob,cpf,npf,vtx), 
+                                               epsilon=att_magnitude,
+                                               dev=device,
+                                               targets=y,
+                                               thismodel=model,
+                                               thiscriterion=loss_fn,
+                                               restrict_impact=restrict_impact,
+                                               epsilon_factors=epsilon_factors) 
         # Compute prediction and loss
         pred = model(glob,cpf,npf,vtx)
         loss = loss_fn(pred, y.type_as(pred))
@@ -48,7 +96,7 @@ def train_loop(dataloader, nbatches, model, loss_fn, optimizer, device, epoch, e
         optimizer.step()
         
         # Add loss to accumulated loss
-        acc_loss += loss
+        acc_loss += loss.item() # AS [19.05.22]: only the value of the loss function, don't need whole computational graph
  
         # Update progress bar description
         avg_loss = acc_loss / (b + 1)
@@ -128,7 +176,7 @@ class training_base(object):
             if not (resumeSilently or recreate_silently):
                 var = input('output dir exists. To recover a training, please type "yes"\n')
                 if not var == 'yes':
-                    raise Exception('output directory must not exists yet')
+                    raise Exception('output directory must not exist yet')
                 isNewTraining=False
                 if recreate_silently:
                     isNewTraining=True     
@@ -201,13 +249,14 @@ class training_base(object):
       #      del self.train_data
        #     del self.val_data
             
-    def saveModel(self,model, optimizer, epoch, scheduler, best_loss, is_best = False):
-        checkpoint = {'state_dict': model.state_dict(),'optimizer' :optimizer.state_dict(),'epoch': epoch,'scheduler': scheduler.state_dict(),'best_loss': best_loss}
+    def saveModel(self,model, optimizer, epoch, scheduler, best_loss, train_loss, val_loss, is_best = False):
+        checkpoint = {'state_dict': model.state_dict(),'optimizer' :optimizer.state_dict(),'epoch': epoch,'scheduler': scheduler.state_dict(),'best_loss': best_loss,'train_loss': train_loss,'val_loss': val_loss}
+        # AS [19.05.22]: want to save both losses (train/val) to plot curves later and compare between trainings (exclude overfitting!)
         if is_best:
             torch.save(checkpoint, self.outputDir+'checkpoint_best_loss.pth')
         else:
             torch.save(checkpoint, self.outputDir+'checkpoint.pth')
-            torch.save(checkpoint, self.outputDir+'checkpoint_epoch_'+str(epoch)+'.pth')
+        torch.save(checkpoint, self.outputDir+'checkpoint_epoch_'+str(epoch)+'.pth')
         
     def _initTraining(self, batchsize, use_sum_of_squares=False):
         
@@ -228,8 +277,12 @@ class training_base(object):
         self.val_data.setBatchSize(batchsize)
         
     def trainModel(self, nepochs, batchsize, batchsize_use_sum_of_squares = False, extend_truth_list_by=0,
-                   load_in_mem = False, max_files = -1, plot_batch_loss = False, **trainargs):
+                   load_in_mem = False, max_files = -1, plot_batch_loss = False, attack = None, att_magnitude = 0., restrict_impact = -1, **trainargs):
         
+        
+        #print('Attack:',attack)
+        #print('att_magnitude:',att_magnitude)
+        #print('restrict_impact:',restrict_impact)
         self._initTraining(batchsize, batchsize_use_sum_of_squares)
         print('starting training')
         if load_in_mem:
@@ -262,6 +315,13 @@ class training_base(object):
             self.model.to(self.device)
             #self.optimizer.to(self.device)
             
+            epsilon_factors = {
+                'glob' : torch.Tensor(np.load(epsilons_per_feature['glob']).transpose()).to(self.device),
+                'cpf' : torch.Tensor(np.load(epsilons_per_feature['cpf']).transpose()).to(self.device),
+                'npf' : torch.Tensor(np.load(epsilons_per_feature['npf']).transpose()).to(self.device),
+                'vtx' : torch.Tensor(np.load(epsilons_per_feature['vtx']).transpose()).to(self.device),
+            }
+            
             while(self.trainedepoches < nepochs):
            
                 #this can change from epoch to epoch
@@ -286,7 +346,7 @@ class training_base(object):
                     self.model.train()
                     for param_group in self.optimizer.param_groups:
                         print('/n Learning rate = '+str(param_group['lr'])+' /n')
-                    train_loss = train_loop(train_generator, nbatches_train, self.model, self.criterion, self.optimizer, self.device, self.trainedepoches, epoch_pbar, acc_loss=0)
+                    train_loss = train_loop(train_generator, nbatches_train, self.model, self.criterion, self.optimizer, self.device, self.trainedepoches, epoch_pbar, attack, att_magnitude, restrict_impact, epsilon_factors, acc_loss=0)
                     self.scheduler.step()
                 
                     self.model.eval()
@@ -296,9 +356,10 @@ class training_base(object):
                     
                     if(val_loss < self.best_loss):
                         self.best_loss = val_loss
-                        self.saveModel(self.model, self.optimizer, self.trainedepoches, self.scheduler, self.best_loss, is_best = True)
+                        self.saveModel(self.model, self.optimizer, self.trainedepoches, self.scheduler, self.best_loss, train_loss, val_loss, is_best = True)
 
                     
-                    self.saveModel(self.model, self.optimizer, self.trainedepoches, self.scheduler, self.best_loss, is_best = False)
+                    self.saveModel(self.model, self.optimizer, self.trainedepoches, self.scheduler, self.best_loss, train_loss, val_loss, is_best = False)
                 
-                traingen.shuffleFilelist()
+                #traingen.shuffleFilelist()
+                traingen.shuffleFileList()
