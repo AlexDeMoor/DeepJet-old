@@ -1,3 +1,5 @@
+### Code coming from Annika Stein : https://github.com/AnnikaStein/DeepJet/tree/adversarial_training ###
+
 from definitions_ParT import integer_variables_by_candidate, cands_per_variable, vars_per_candidate
 import torch
 import numpy as np
