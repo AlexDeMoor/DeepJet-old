@@ -1,3 +1,5 @@
+### Code updates from Annika Stein : https://github.com/AnnikaStein/DeepJet/tree/adversarial_training ###
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
