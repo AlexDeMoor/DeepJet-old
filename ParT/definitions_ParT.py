@@ -1,3 +1,5 @@
+### Code coming from Annika Stein : https://github.com/AnnikaStein/DeepJet/tree/adversarial_training ###
+
 cands_per_variable = {
     'glob' : 1,
     'cpf' : 25,
