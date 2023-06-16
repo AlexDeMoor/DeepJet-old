@@ -1,3 +1,5 @@
+### Code coming from Annika Stein : https://github.com/AnnikaStein/DeepJet/tree/adversarial_training ###
+
 import torch 
 import torch.nn as nn
 from pytorch_Part import training_base
